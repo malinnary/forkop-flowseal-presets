@@ -1,0 +1,1 @@
+{"admin/services/flowseal-presets":{"title":"Flowseal Presets","order":44,"action":{"type":"view","path":"flowseal-presets"},"depends":{"acl":["flowseal-presets"]}}}

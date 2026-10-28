@@ -1,0 +1,47 @@
+name: Build and release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch pinned Flowseal source
+        run: |
+          git clone https://github.com/Flowseal/zapret-discord-youtube.git .upstream
+          git -C .upstream checkout --detach "$(python -c 'import json; print(json.load(open("upstream.lock.json"))["commit"])')"
+      - name: Build and test
+        run: |
+          python tools/import_upstream.py .upstream dist/inventory
+          python tools/compile_two.py
+          python tools/build_release.py
+          python -m unittest discover -s tests -v
+          sh tests/test_dependencies.sh files/dependencies.sh
+          node --check files/flowseal-presets.js
+          sh -n files/install.sh
+          sh -n files/dependencies.sh
+          sh -n files/flowseal-presets
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forkop-flowseal-installer
+          path: |
+            dist/forkop-flowseal-install.run
+            dist/forkop-flowseal-install.run.sha256
+            dist/forkop-flowseal-alpha.tar.gz
+      - name: Publish alpha
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" --verify-tag --prerelease --title "Flowseal presets $RELEASE_TAG" --notes-file RELEASE_NOTES.md dist/forkop-flowseal-install.run dist/forkop-flowseal-install.run.sha256 dist/forkop-flowseal-alpha.tar.gz

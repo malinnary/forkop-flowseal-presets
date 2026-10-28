@@ -1,0 +1,131 @@
+#!/bin/sh
+# Experimental adapter: restricted to a clean Forkop configuration.
+set -eu
+ROOT=/usr/share/forkop-flowseal
+PRESETS=$ROOT/presets-v2
+STATE=/etc/forkop-flowseal
+LOCK=/tmp/flowseal-presets.lock
+fail() { echo "$*" >&2; exit 1; }
+if [ "${1:-}" = start ]; then
+ action=${2:-}; preset=${3:-}
+ case "$action" in check|apply|restore) ;; *) fail 'Invalid action';; esac
+ case "$preset" in *[!a-z0-9-]*) fail 'Invalid preset';; esac
+ command -v setsid >/dev/null || fail 'setsid is required for background jobs'
+ if [ -d "$LOCK" ]; then
+  owner=$(cat "$LOCK/pid" 2>/dev/null || true)
+  case "$owner" in ''|*[!0-9]*) fail 'Lock needs inspection';; esac
+  if kill -0 "$owner" 2>/dev/null; then fail "Another operation is running (PID $owner)"; fi
+ fi
+ setsid "$0" job "$action" "$preset" >/tmp/flowseal-job.log 2>&1 </dev/null &
+ echo queued
+ exit 0
+fi
+async=no
+if [ "${1:-}" = job ]; then async=yes; shift; fi
+case "${1:-}" in
+ list) cat "$ROOT/catalog.txt"; exit 0 ;;
+ status) cat "$STATE/active" 2>/dev/null || echo inactive; exit 0 ;;
+ check|apply) mode=$1; name=${2:-}; case "$name" in ''|*[!a-z0-9-]*) fail 'Invalid preset';; esac
+  [ -d "$PRESETS/$name" ] || fail 'Unknown preset' ;;
+ restore) mode=restore ;;
+ *) fail 'Usage: flowseal-presets list | status | check NAME | apply NAME | restore' ;;
+esac
+if ! mkdir "$LOCK" 2>/dev/null; then
+ owner=$(cat "$LOCK/pid" 2>/dev/null || true)
+ case "$owner" in ''|*[!0-9]*) fail 'Lock has no valid owner; manual inspection required';; esac
+ if kill -0 "$owner" 2>/dev/null; then fail "Another operation is running (PID $owner)"; fi
+ rm -f "$LOCK/pid" "$LOCK/check.srs"
+ rmdir "$LOCK" || fail 'Unexpected lock contents; inspect manually'
+ mkdir "$LOCK" 2>/dev/null || fail 'Another operation acquired the lock'
+fi
+echo $$ > "$LOCK/pid"
+[ "$async" = no ] || echo running > /tmp/flowseal-job.status
+mutating=no
+cleanup() {
+ code=$?
+ if [ "$mutating" = yes ] && [ "$code" -ne 0 ]; then
+  uci revert forkop || true
+  /etc/init.d/forkop stop || true
+  cp -p "$STATE/previous.uci" /etc/config/forkop
+  if [ -f "$STATE/active" ] || [ "$(cat "$STATE/was-running")" = yes ]; then /etc/init.d/forkop start || true; fi
+ fi
+ rm -f "$LOCK/check.srs"
+ rm -f "$LOCK/pid"
+ rmdir "$LOCK" 2>/dev/null || true
+ if [ "$async" = yes ]; then
+  if [ "$code" = 0 ]; then echo success > /tmp/flowseal-job.status; else echo failed > /tmp/flowseal-job.status; fi
+ fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+[ -z "$(uci changes forkop)" ] || fail 'Save or discard pending Forkop edits first'
+restore_base() {
+ /etc/init.d/forkop stop
+ cp -p "$STATE/before.uci" /etc/config/forkop
+ if [ "$(cat "$STATE/was-running")" = yes ]; then /etc/init.d/forkop start; fi
+ rm -f "$STATE/active" "$STATE/applied.sha256"
+}
+if [ "$mode" = restore ]; then
+ [ -f "$STATE/before.uci" ] || fail 'No saved configuration'
+ [ -f "$STATE/applied.sha256" ] || fail 'No managed applied state'
+ sha256sum -c "$STATE/applied.sha256" >/dev/null || fail 'Forkop changed externally: refusing to overwrite'
+ # Do not strand a manually configured DNS chain on a stopped service.
+ if [ "$(cat "$STATE/was-running")" != yes ] && uci show dhcp | grep -q '127\.0\.0\.42'; then
+  fail 'Restore would stop Forkop while DHCP/DNS uses 127.0.0.42. Reconfigure DNS first; nothing changed.'
+ fi
+ restore_base
+ echo 'Restored original Forkop configuration'; exit 0
+fi
+for file in "$PRESETS/$name"/*.opts; do
+ opts=$(tr -d '\r' < "$file")
+ ucode -L /usr/lib/forkop /usr/lib/forkop/providers/zapret/validator.uc validate-json nfqws "$opts"
+ # Generated options contain no spaces inside values, shell expansion or quotes.
+ (set -f; /opt/zapret/nfq/nfqws --dry-run --qnum=65534 $opts) >/dev/null 2>&1
+ sing-box rule-set compile --output "$LOCK/check.srs" "${file%.opts}.json" >/dev/null
+done
+rm -f "$LOCK/check.srs"
+[ "$mode" = apply ] || { echo 'Checks passed'; exit 0; }
+# Initial alpha refuses mixed configurations: no accidental precedence changes.
+for section in $(uci show forkop | sed -n 's/^forkop\.\([^.=]*\)=section$/\1/p'); do
+ case "$section" in fs_block_*) [ -f "$STATE/applied.sha256" ] || fail 'Unowned sections found';; *) fail 'This alpha requires clean Forkop (no existing sections)';; esac
+done
+if [ -f "$STATE/applied.sha256" ]; then
+ sha256sum -c "$STATE/applied.sha256" >/dev/null || fail 'Forkop changed externally; stop and review'
+fi
+mkdir -p "$STATE"; chmod 700 "$STATE"
+if [ ! -f "$STATE/active" ]; then
+ cp -p /etc/config/forkop "$STATE/before.uci"
+ if /etc/init.d/forkop status >/dev/null 2>&1; then echo yes > "$STATE/was-running"; else echo no > "$STATE/was-running"; fi
+fi
+cp -p /etc/config/forkop "$STATE/previous.uci"
+mutating=yes
+for section in $(uci show forkop | sed -n 's/^forkop\.\(fs_block_[^.=]*\)=section$/\1/p'); do uci delete "forkop.$section"; done
+count=0
+for file in "$PRESETS/$name"/*.opts; do
+ id=$(basename "$file" .opts | tr '-' '_'); section=fs_$id
+ uci set "forkop.$section=section"
+ case "$id" in block_youtube) label="YouTube — $name";; block_discord) label="Discord — $name";; *) fail 'Unexpected compact section';; esac
+ uci set "forkop.$section.label=$label"
+ uci set "forkop.$section.enabled=1"
+ uci set "forkop.$section.action=zapret"
+ uci set "forkop.$section.nfqws_opt=$(tr -d '\r' < "$file")"
+ # Keep logical/inverted matchers in sing-box; do not flatten CIDRs into nft sets.
+ uci add_list "forkop.$section.rule_set=${file%.opts}.json"
+ count=$((count+1))
+done
+uci commit forkop
+if /etc/init.d/forkop restart; then
+ ready=$(forkop get_zapret_status | jsonfilter -e '@.ready')
+ running=$(forkop get_zapret_status | jsonfilter -e '@.running_process_count')
+else ready=false; running=0; fi
+if [ "$ready" != true ] || [ "$running" != "$count" ]; then
+ /etc/init.d/forkop stop
+ cp -p "$STATE/previous.uci" /etc/config/forkop
+ if [ -f "$STATE/active" ] || [ "$(cat "$STATE/was-running")" = yes ]; then /etc/init.d/forkop start; fi
+ mutating=no
+ fail 'Activation failed; previous config restored'
+fi
+printf '%s\n' "$name" > "$STATE/active"
+sha256sum /etc/config/forkop > "$STATE/applied.sha256"
+mutating=no
+echo "Applied $name ($count fixed sections); service readiness is NOT a network quality test"

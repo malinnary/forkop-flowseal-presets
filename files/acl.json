@@ -1,0 +1,1 @@
+{"flowseal-presets":{"description":"Manage experimental Flowseal presets for Forkop","read":{"file":{"/usr/share/forkop-flowseal/catalog.txt":["read"],"/tmp/flowseal-job.status":["read"],"/tmp/flowseal-job.log":["read"]},"ubus":{"file":["read"]}},"write":{"file":{"/usr/sbin/flowseal-presets":["exec"]},"ubus":{"file":["exec"]}}}}
