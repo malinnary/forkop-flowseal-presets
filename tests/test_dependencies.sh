@@ -6,8 +6,10 @@ source_file=$1
 suite=$(mktemp -d /tmp/flowseal-mocks-XXXXXX)
 trap 'rm -rf "$suite"' EXIT
 for scenario in existing missing-apk missing-opkg unsupported bad-checksum; do
- sandbox="$suite/$scenario"; mkdir -p "$sandbox"
- sed "s@/opt/zapret/nfq/nfqws@$sandbox/nfqws@g" "$source_file" > "$sandbox/dependencies.sh"
+ sandbox="$suite/$scenario"; mkdir -p "$sandbox/luci-view"
+ sed -e "s@/opt/zapret/nfq/nfqws@$sandbox/nfqws@g" \
+     -e "s@/www/luci-static/resources/view@$sandbox/luci-view@g" \
+     "$source_file" > "$sandbox/dependencies.sh"
  printf 'expected  forkop_1.0.5.apk\nexpected  forkop_1.0.5.ipk\nexpected  luci-app-forkop_1.0.5.apk\nexpected  luci-app-forkop_1.0.5.ipk\nexpected  luci-i18n-forkop-ru_1.0.5.apk\nexpected  luci-i18n-forkop-ru_1.0.5.ipk\n' > "$sandbox/forkop-packages.sha256"
  case "$scenario" in existing|unsupported) touch "$sandbox/installed" "$sandbox/nfqws"; chmod +x "$sandbox/nfqws";; esac
  # Separate shell keeps set -e effective, unlike a function called in `if`.

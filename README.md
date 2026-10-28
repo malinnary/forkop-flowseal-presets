@@ -14,10 +14,10 @@
 Сначала сохраните резервную копию OpenWrt. Команда выполняется **по SSH на роутере от root**,
 а не в PowerShell на компьютере. Нужны рабочие DNS/HTTPS и доступ к GitHub и пакетным feeds OpenWrt.
 
-Для релиза `v0.1.0-alpha.1`:
+Для релиза `v0.1.0-alpha.2`:
 
 ```sh
-wget -O /tmp/flowseal-install.run https://github.com/malinnary/forkop-flowseal-presets/releases/download/v0.1.0-alpha.1/forkop-flowseal-install.run && sh /tmp/flowseal-install.run
+wget -O /tmp/flowseal-install.run https://github.com/malinnary/forkop-flowseal-presets/releases/download/v0.1.0-alpha.2/forkop-flowseal-install.run && sh /tmp/flowseal-install.run
 ```
 
 Или скачайте `.run` из [Releases](https://github.com/malinnary/forkop-flowseal-presets/releases),
