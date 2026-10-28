@@ -1,6 +1,5 @@
 """Build an allowlisted alpha archive. No credentials or router backups allowed."""
 import hashlib
-import base64
 import io
 import json
 import tarfile
@@ -47,6 +46,6 @@ print('Built',target.name,'files:',len(files),'sha256:',hashlib.sha256(target.re
 payload=target.read_bytes()
 header=(root/'files/selfextract.sh').read_text(encoding='utf-8').replace('@SHA256@',hashlib.sha256(payload).hexdigest())
 installer=root/'dist/forkop-flowseal-install.run'
-installer.write_bytes(header.encode()+base64.encodebytes(payload))
+installer.write_bytes(header.encode()+payload)
 installer.with_suffix('.run.sha256').write_text(hashlib.sha256(installer.read_bytes()).hexdigest()+'  '+installer.name+'\n',encoding='ascii')
 print('One-command installer:',installer)

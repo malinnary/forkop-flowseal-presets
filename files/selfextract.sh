@@ -7,7 +7,7 @@ trap 'rm -rf "$task_dir"' EXIT
 trap 'exit 130' HUP INT TERM
 line=$(awk '/^__FLOWSEAL_PAYLOAD__$/ {print NR+1; exit}' "$0")
 [ -n "$line" ]
-tail -n +"$line" "$0" | base64 -d > "$task_dir/package.tar.gz"
+tail -n +"$line" "$0" > "$task_dir/package.tar.gz"
 printf '%s  %s\n' '@SHA256@' "$task_dir/package.tar.gz" | sha256sum -c - >/dev/null
 tar -xzf "$task_dir/package.tar.gz" -C "$task_dir"
 sh "$task_dir/install.sh"
